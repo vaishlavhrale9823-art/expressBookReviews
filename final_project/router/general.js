@@ -7,37 +7,68 @@ const users = require('./auth_users.js').users;
 
 const public_users = express.Router();
 
-// Retrieve books.
-// Use Axios if an actual data API URL is configured;
-// otherwise, use the project's local booksdb.js.
+// Retrieve books using Axios when a real external data API is configured.
+// Otherwise, use the local book database.
 async function getBooks() {
     const apiUrl = process.env.BOOKS_API_URL;
 
-    if (apiUrl) {
-        const response = await axios.get(apiUrl);
-        return response.data;
+    if (!apiUrl) {
+        return books;
     }
 
-    return books;
+    const response = await axios.get(apiUrl, {
+        timeout: 5000
+    });
+
+    if (
+        !response.data ||
+        typeof response.data !== 'object' ||
+        Array.isArray(response.data)
+    ) {
+        throw new Error('Invalid books API response');
+    }
+
+    return response.data;
+}
+
+// Reusable search function for author and title
+function searchBooks(allBooks, field, searchValue) {
+    const value = searchValue.trim().toLowerCase();
+
+    return Object.values(allBooks).filter(book =>
+        book &&
+        typeof book[field] === 'string' &&
+        book[field].toLowerCase() === value
+    );
 }
 
 // Register a new user
 public_users.post('/register', (req, res) => {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
 
-    if (!username || !password) {
+    if (
+        typeof username !== 'string' ||
+        typeof password !== 'string' ||
+        !username.trim() ||
+        !password
+    ) {
         return res.status(400).json({
             message: 'Username and password are required'
         });
     }
 
-    if (isValid(username)) {
+    const cleanUsername = username.trim();
+
+    if (isValid(cleanUsername)) {
         return res.status(409).json({
             message: 'User already exists'
         });
     }
 
-    users.push({ username, password });
+    users.push({
+        username: cleanUsername,
+        password
+    });
 
     return res.status(200).json({
         message: 'User successfully registered. Now you can login'
@@ -50,8 +81,10 @@ public_users.get('/', async (req, res) => {
         const allBooks = await getBooks();
         return res.status(200).json(allBooks);
     } catch (error) {
+        console.error('Error retrieving books:', error.message);
+
         return res.status(502).json({
-            message: 'Unable to retrieve books'
+            message: 'Unable to retrieve books from the data service'
         });
     }
 });
@@ -70,8 +103,10 @@ public_users.get('/isbn/:isbn', async (req, res) => {
 
         return res.status(200).json(book);
     } catch (error) {
+        console.error('Error retrieving book:', error.message);
+
         return res.status(502).json({
-            message: 'Unable to retrieve book'
+            message: 'Unable to retrieve book from the data service'
         });
     }
 });
@@ -79,18 +114,29 @@ public_users.get('/isbn/:isbn', async (req, res) => {
 // Get books by author
 public_users.get('/author/:author', async (req, res) => {
     try {
-        const allBooks = await getBooks();
-        const author = req.params.author.toLowerCase();
+        const author = req.params.author;
 
-        const result = Object.values(allBooks).filter(book =>
-            book.author &&
-            book.author.toLowerCase() === author
-        );
+        if (!author || !author.trim()) {
+            return res.status(400).json({
+                message: 'Author is required'
+            });
+        }
+
+        const allBooks = await getBooks();
+        const result = searchBooks(allBooks, 'author', author);
+
+        if (result.length === 0) {
+            return res.status(404).json({
+                message: 'No books found for this author'
+            });
+        }
 
         return res.status(200).json(result);
     } catch (error) {
+        console.error('Error searching by author:', error.message);
+
         return res.status(502).json({
-            message: 'Unable to search by author'
+            message: 'Unable to search books by author'
         });
     }
 });
@@ -98,18 +144,29 @@ public_users.get('/author/:author', async (req, res) => {
 // Get books by title
 public_users.get('/title/:title', async (req, res) => {
     try {
-        const allBooks = await getBooks();
-        const title = req.params.title.toLowerCase();
+        const title = req.params.title;
 
-        const result = Object.values(allBooks).filter(book =>
-            book.title &&
-            book.title.toLowerCase() === title
-        );
+        if (!title || !title.trim()) {
+            return res.status(400).json({
+                message: 'Title is required'
+            });
+        }
+
+        const allBooks = await getBooks();
+        const result = searchBooks(allBooks, 'title', title);
+
+        if (result.length === 0) {
+            return res.status(404).json({
+                message: 'No books found with this title'
+            });
+        }
 
         return res.status(200).json(result);
     } catch (error) {
+        console.error('Error searching by title:', error.message);
+
         return res.status(502).json({
-            message: 'Unable to search by title'
+            message: 'Unable to search books by title'
         });
     }
 });
